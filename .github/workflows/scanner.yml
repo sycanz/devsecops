@@ -56,6 +56,15 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2 (FS Scan) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
+
   # Stage 3: Container Build – If Stage 2 passes, then build the container.
   stage-3-container-build:
     name: Stage 3 - Container Build
