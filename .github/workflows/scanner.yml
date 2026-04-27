@@ -32,29 +32,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Trivy FS scan (JSON output)
+      - name: Run Trivy scan (FS mode)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
           format: 'json'
-          output: 'trivy-results.json'
+          output: 'trivy-fs-results.json'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy scan (IaC mode)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'config'
+          hide-progress: false
+          format: 'json'
+          output: 'trivy-iac-results.json'
+          exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
       - name: Upload Scan Results
         uses: actions/upload-artifact@v4
         with:
           name: trivy-results
-          path: trivy-results.json
-
-      - name: Run Trivy FS scan (Table output for logs)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
+          path: trivy-*.json
+          retention-days: 1
 
       - name: Notify Slack on Failure
         if: failure()
@@ -62,7 +64,7 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2 (FS Scan) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          --data '{\"text\":\"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2 (FS/IaC Scan) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \
           $SLACK_WEBHOOK
 
   # Stage 3: Container Build – If Stage 2 passes, then build the container.
