@@ -1,94 +1,116 @@
 import json
 import os
-import sys
 import google.generativeai as genai
 
-def remediate():
-    # 1. Load scan results
-    try:
-        with open('trivy-results.json', 'r') as f:
-            scan_data = json.load(f)
-    except Exception as e:
-        print(f"Error loading scan results: {e}")
-        return
-
+def load_vulnerabilities(filename):
+    """Loads and parses Trivy JSON reports (FS or Config/IaC)."""
+    if not os.path.exists(filename):
+        return []
+    
+    with open(filename, 'r') as f:
+        data = json.load(f)
+    
     vulnerabilities = []
-    if 'Results' in scan_data:
-        for result in scan_data['Results']:
+    if 'Results' in data:
+        for result in data['Results']:
+            target = result.get('Target') # The file path (e.g. terraform/main.tf)
+            
+            # 1. Capture Dependency Vulnerabilities
             if 'Vulnerabilities' in result:
-                for vuln in result['Vulnerabilities']:
+                for v in result['Vulnerabilities']:
                     vulnerabilities.append({
-                        'PkgName': vuln.get('PkgName'),
-                        'InstalledVersion': vuln.get('InstalledVersion'),
-                        'FixedVersion': vuln.get('FixedVersion'),
-                        'ID': vuln.get('VulnerabilityID'),
-                        'Title': vuln.get('Title')
+                        'Target': target,
+                        'PkgName': v.get('PkgName'),
+                        'FixedVersion': v.get('FixedVersion'),
+                        'ID': v.get('VulnerabilityID'),
+                        'Title': v.get('Title'),
+                        'Type': 'dependency'
                     })
+            
+            # 2. Capture Infrastructure Misconfigurations
+            if 'Misconfigurations' in result:
+                for m in result['Misconfigurations']:
+                    vulnerabilities.append({
+                        'Target': target,
+                        'ID': m.get('ID'),
+                        'Title': m.get('Title'),
+                        'Message': m.get('Message'),
+                        'Resolution': m.get('Resolution'),
+                        'Type': 'misconfiguration'
+                    })
+    return vulnerabilities
 
-    if not vulnerabilities:
-        print("No vulnerabilities found.")
+def remediate():
+    # 1. Collect all vulnerabilities from both scan types
+    fs_vulns = load_vulnerabilities('trivy-fs-results.json')
+    iac_vulns = load_vulnerabilities('trivy-iac-results.json')
+    all_vulns = fs_vulns + iac_vulns
+
+    if not all_vulns:
+        print("No vulnerabilities found to fix.")
         return
 
-    # 2. Get the content of requirements.txt
-    try:
-        with open('requirements.txt', 'r') as f:
-            reqs_content = f.read()
-    except Exception as e:
-        print(f"Error reading requirements.txt: {e}")
-        reqs_content = ""
+    # 2. Group findings by the file they belong to
+    files_to_fix = {}
+    for v in all_vulns:
+        target = v['Target']
+        if target not in files_to_fix:
+            files_to_fix[target] = []
+        files_to_fix[target].append(v)
 
     # 3. Setup Gemini AI
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
-        print("GEMINI_API_KEY not found. Attempting simple pattern match remediation...")
-        # Fallback to simple replacement if fixed version is known
-        new_content = reqs_content
-        for v in vulnerabilities:
-            if v['FixedVersion'] and v['PkgName']:
-                pkg = v['PkgName']
-                fixed = v['FixedVersion']
-                # Very basic replacement logic
-                import re
-                new_content = re.sub(rf"{pkg}==[\d.]+", f"{pkg}=={fixed}", new_content)
-        
-        with open('requirements.txt', 'w') as f:
-            f.write(new_content)
-        print("Applied simple pattern match fixes.")
+        print("GEMINI_API_KEY not found. Automated AI remediation requires an API key.")
         return
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-1.5-flash')
 
-    prompt = f"""
-    You are a DevSecOps AI. I have a security scan result from Trivy and my current requirements.txt.
-    Please update the requirements.txt to fix the vulnerabilities.
+    # 4. Iterate through each broken file and ask AI for a fixed version
+    for target_file, vulns in files_to_fix.items():
+        if not os.path.exists(target_file):
+            print(f"Skipping fix for {target_file}: File not found in workspace.")
+            continue
 
-    Trivy Found:
-    {json.dumps(vulnerabilities, indent=2)}
+        print(f"Applying AI logic to secure: {target_file}...")
+        with open(target_file, 'r') as f:
+            content = f.read()
 
-    Current requirements.txt:
-    {reqs_content}
+        prompt = f"""
+        You are a Senior DevSecOps Engineer. Your task is to fix the security issues in the provided file.
+        
+        File Path: {target_file}
+        Current Content:
+        ---
+        {content}
+        ---
 
-    Instructions:
-    1. Update versions of packages to at least the 'FixedVersion' mentioned.
-    2. Maintain the format of the original file.
-    3. Return ONLY the content of the updated requirements.txt file. No markdown, no explanation.
-    """
+        Security Vulnerabilities/Misconfigurations detected by Trivy:
+        {json.dumps(vulns, indent=2)}
 
-    response = model.generate_content(prompt)
-    if response and response.text:
-        new_reqs = response.text.strip()
-        # Clean up in case Gemini adds ```python or ```
-        if "```" in new_reqs:
-            new_reqs = new_reqs.split("```")[-2]
-            if new_reqs.startswith("python") or new_reqs.startswith("text"):
-                new_reqs = "\n".join(new_reqs.split("\n")[1:])
+        Instructions:
+        1. Rewrite the file to fix the vulnerabilities (update versions) or misconfigurations (fix settings).
+        2. Keep the original intent and functionality of the code.
+        3. Return ONLY the complete, corrected content of the file. No markdown code blocks (like ```terraform), no explanations.
+        """
 
-        with open('requirements.txt', 'w') as f:
-            f.write(new_reqs)
-        print("AI-generated fixes applied to requirements.txt")
-    else:
-        print("AI failed to generate a response.")
+        response = model.generate_content(prompt)
+        if response and response.text:
+            fixed_content = response.text.strip()
+            
+            # Clean up potential markdown formatting from AI response
+            if "```" in fixed_content:
+                lines = fixed_content.split("\n")
+                if lines[0].startswith("```"): lines = lines[1:]
+                if lines[-1].startswith("```"): lines = lines[:-1]
+                fixed_content = "\n".join(lines).strip()
+
+            with open(target_file, 'w') as f:
+                f.write(fixed_content)
+            print(f"✅ Fixed {target_file}")
+        else:
+            print(f"❌ Failed to get a suggestion for {target_file}")
 
 if __name__ == "__main__":
     remediate()
