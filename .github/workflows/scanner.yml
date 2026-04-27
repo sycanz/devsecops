@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  stage-1-lint-gitleaks:
+  stage-1-gitleaks:
     name: Stage 1 - Lint & Gitleaks
     runs-on: ubuntu-latest
     steps:
@@ -21,12 +21,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Use Ruff Link
-        uses: astral-sh/ruff-action@v3
-
   stage-2-fs-scan:
     name: Stage 2 - Trivy FS Scan
-    needs: stage-1-lint-gitleaks
+    needs: stage-1-gitleaks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
