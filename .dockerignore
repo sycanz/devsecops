@@ -3,3 +3,9 @@ __pycache__/
 .git/
 .github/
 devsecops-app.tar
+k8s/
+terraform/
+.env
+.pre-commit-config.yaml
+CONTEXT.md
+ROADMAP.md
