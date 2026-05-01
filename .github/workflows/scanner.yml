@@ -49,7 +49,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Upload Scan Results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-results
           path: trivy-*.json
@@ -97,7 +97,7 @@ jobs:
           docker save $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -o devsecops-app.tar
 
       - name: Upload Image Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: container-image
           path: devsecops-app.tar
