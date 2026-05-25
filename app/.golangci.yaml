@@ -1,0 +1,64 @@
+version: "2"
+
+issues:
+  max-same-issues: 50
+
+linters:
+  enable:
+    - errcheck
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  disable:
+    - mnd
+    - nilnil
+    - sloglint
+    - testpackage
+    - err113
+  settings:
+    errcheck:
+      check-type-assignments: true
+    gocritic:
+      settings:
+        captLocal:
+          paramsOnly: false
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1016
+        - -QF1008
+
+  exclusions:
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - source: 'TODO'
+        linters: [ godot ]
+      - text: 'should have a package comment'
+        linters: [ revive ]
+      - text: 'exported \S+ \S+ should have comment( \(or a comment on this block\))? or be unexported'
+        linters: [ revive, staticcheck ]
+      - path: '_test\.go'
+        linters:
+          - bodyclose
+          - dupl
+          - errcheck
+          - funlen
+          - goconst
+          - gosec
+          - noctx
+          - wrapcheck
+      - text: 'unused-parameter'
+        linters: [ revive ]
+      - text: 'blank-imports'
+        linters: [ revive ]

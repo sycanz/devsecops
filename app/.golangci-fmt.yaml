@@ -1,0 +1,12 @@
+version: "2"
+
+formatters:
+  enable:
+    - goimports
+    - golines
+  settings:
+    goimports:
+      local-prefixes:
+        - employee-api
+    golines:
+      max-len: 120

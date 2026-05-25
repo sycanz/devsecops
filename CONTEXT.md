@@ -20,9 +20,13 @@ _Avoid_: CI/CD, workflow
 Multi-purpose security scanner. Scans container images, filesystems, and IaC configurations for vulnerabilities.
 _Avoid_: Clair, Anchore (alternatives)
 
-**Ruff**:
-Fast Python linter and formatter.
-_Avoid_: flake8, pylint (alternatives)
+**golangci-lint**:
+Go linter runner. Catches bugs, style issues, and security anti-patterns in pre-commit.
+_Avoid_: staticcheck alone, revive alone
+
+**SemGrep**:
+SAST tool for catching code-level vulnerabilities and anti-patterns in Go and IaC files.
+_Avoid_: SonarQube (alternative, heavier), CodeQL (alternative, GitHub-only)
 
 **GitLeaks**:
 Static analysis tool for detecting hardcoded secrets in git repositories.
@@ -41,7 +45,7 @@ Secret management tool for centralized secrets storage and rotation.
 _Avoid_: AWS Secrets Manager, SSM Parameter Store (for production)
 
 **Employee Directory API**:
-FastAPI-based app managing employee records (name, email, department, role, salary). Stores PII, scoped under GDPR controls.
+Go-based app managing employee records (name, email, department, role, salary). Stores PII, scoped under GDPR controls.
 _Avoid_: sample app, test workload, the app
 
 **GDPR (General Data Protection Regulation)**:
@@ -53,20 +57,40 @@ Audit framework for service organizations. Referenced for controls (access contr
 _Avoid_: ISO 27001 (alternative, broader)
 
 **External Secrets Operator**:
-Kubernetes operator that syncs secrets from external providers (GitHub, AWS) into the cluster.
+Kubernetes operator that syncs secrets from external providers (Vault) into the cluster.
 _Avoid_: Sealed Secrets, SOPS (alternatives)
+
+**ArgoCD**:
+GitOps deployment tool. Watches a gitops-repo and syncs manifests to EKS automatically.
+_Avoid_: Flux (alternative), manual kubectl
+
+**SBOM (Software Bill of Materials)**:
+Machine-readable inventory of all dependencies in the container image. Generated post-build in CycloneDX format.
+_Avoid_: SPDX (alternative)
+
+**kube-prometheus-stack**:
+Helm chart bundling Prometheus, Alertmanager, kube-state-metrics, node-exporter, and Grafana dashboards. Deployed on EKS for cluster monitoring.
+_Avoid_: Prometheus Operator (predecessor name)
+
+**Tailscale**:
+WireGuard-based VPN for private networking between home server (Vault, Grafana) and EKS clusters.
+_Avoid_: OpenVPN, WireGuard manual config
 
 ## Relationships
 
-- **Pipeline** builds Docker image → pushes to **ECR** → deploys to **EKS**
-- **Kyverno** runs on **EKS** to enforce security policies on deployed resources
-- **Terraform** provisions **EKS**, **ECR**, networking, and IAM resources
-- **Trivy** scans code dependencies, filesystem, and Docker images at various pipeline stages
+- **Pipeline** lints (golangci-lint) → scans (GitLeaks, SemGrep, Trivy) → tests Kyverno policies → builds image → scans image → generates SBOM → pushes to ECR → updates gitops-repo
+- **ArgoCD** watches gitops-repo → syncs manifests to EKS
+- **Kyverno** runs on EKS to enforce security policies on deployed resources
+- **Terraform** provisions EKS, ECR, networking, and IAM resources (separate for stg/prd)
+- **Trivy** scans code dependencies, IaC configs, and container images at various pipeline stages
 - **GitLeaks** scans commits for leaked secrets before pipeline proceeds
+- **SemGrep** scans Go and IaC code for vulnerabilities and anti-patterns before build
+- **Vault** serves secrets to pipeline (via OIDC) and to EKS clusters (via ESO) over Tailscale
+- **kube-prometheus-stack** on EKS exposes metrics → **Grafana** on home server scrapes via Tailscale
 
 ## Example dialogue
 
-> **Dev:** "When we deploy to **EKS**, does **Kyverno** block the deployment if a container runs as root?"
+> **Dev:** "When we deploy to EKS, does Kyverno block the deployment if a container runs as root?"
 > **Security engineer:** "Yes — our policy enforces `runAsNonRoot: true` and will reject pods that violate it. We test policies in the pipeline before deployment, so issues are caught early."
 
 ## Flagged ambiguities
@@ -76,10 +100,24 @@ _Avoid_: Sealed Secrets, SOPS (alternatives)
 ## Key Decisions
 
 - **Terraform state**: Use S3 backend with DynamoDB locking (not local)
-- **Kyverno installation**: Cluster-wide in `kyverno-system` namespace
-- **Kyverno mode**: Start with `enforce: false` (audit), move to `enforce: true` after testing
-- **Secrets for pipeline**: GitHub Secrets (document Vault as production upgrade)
-- **Pipeline pre-deployment**: Add Kyverno policy validation step using `kyverno apply`
+- **Terraform layout**: environments/ (stg, prd) calling shared modules/ (not workspaces)
+- **EKS clusters**: Two separate clusters (stg + prd), not namespaces within one
+- **GitOps**: Separate gitops-repo with stg/ and prd/ directories; ArgoCD watches each
+- **Kyverno installation**: Cluster-wide in kyverno-system namespace on both clusters
+- **Kyverno mode**: Audit on prd first, flip to Enforce after stg validation
+- **Kyverno in pipeline**: kyverno apply dry-run against manifests pre-deployment
+- **Secrets for pipeline**: GitHub Secrets for bootstrapping; Vault with OIDC auth as target
+- **Vault location**: Debian home server, accessible via Tailscale
+- **Secrets to cluster**: External Secrets Operator syncs Vault → K8s Secrets
 - **Public repo**: Keep ECR URLs, AWS account IDs, cluster endpoints as placeholders or in secrets
 - **Compliance framework**: GDPR as primary reference (SOC2 secondary). Not switching to PCI-DSS/HIPAA.
 - **App scope**: Employee Directory API with PII (email) and sensitive data (salary). No government IDs.
+- **Language**: Go (not Python — stronger alignment with cloud-native ecosystem)
+- **Pre-commit**: golangci-lint + gitleaks + go test (not ruff)
+- **SAST tool**: SemGrep for code-level scanning (before build stage)
+- **Container scanner**: Trivy for both filesystem (SCA) and image scanning
+- **SBOM**: Generated post-build with trivy image --format cyclonedx
+- **CD approach**: ArgoCD (not kubectl apply via pipeline)
+- **Monitoring**: kube-prometheus-stack on EKS, Grafana on home server
+- **Connectivity**: Tailscale between home server ↔ EKS ↔ CI (when needed)
+- **Slack notifications**: Pipeline start / success / failure via webhook

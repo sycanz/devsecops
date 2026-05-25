@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vulnerable-app
+  name: employee-directory
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: vulnerable-app
+      app: employee-directory
   template:
     metadata:
       labels:
-        app: vulnerable-app
+        app: employee-directory
     spec:
       containers:
       - name: main
