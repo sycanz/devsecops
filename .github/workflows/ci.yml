@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+    branches:
       - main
 
 permissions:
@@ -29,9 +30,10 @@ jobs:
       image: semgrep/semgrep
     if: (github.actor != 'dependabot[bot]')
     steps:
-      - name: Run Semgrep (Go + OWASP)
       - uses: actions/checkout@v6
-      - run: semgrep ci --config p/golang --config=p/owasp-top-ten
+
+      - name: Run Semgrep (Go + OWASP)
+        run: semgrep ci --config p/golang --config=p/owasp-top-ten
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
@@ -41,7 +43,7 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2a - SAST (Semgrep) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \
+          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2a - SAST (Semgrep) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
           $SLACK_WEBHOOK
 
   stage-2b-static-analysis-sca:
@@ -81,7 +83,7 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2b - SCA (Trivy) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \
+          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2b - SCA (Trivy) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
           $SLACK_WEBHOOK
 
   # # Stage 3: Container Build – If Stage 2 passes, then build and push to ECR.
