@@ -16,7 +16,7 @@ import (
 func New() http.Handler {
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		dbPath = "../employees.db"
+		dbPath = "/tmp/employees.db"
 	}
 	s, err := store.New(dbPath)
 	if err != nil {
