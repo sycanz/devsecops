@@ -2,9 +2,13 @@ name: DevSecOps Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
-    branches: [ main ]
+      - main
+
+contents:
+  read
 
 jobs:
   stage-1-gitleaks:
@@ -18,22 +22,33 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  stage-2-static-analysis:
-    name: Stage 2 - Static Analysis (SAST + SCA)
+  stage-2a-static-analysis-sast:
+    name: Stage 2a - SAST (Semgrep)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    if: (github.actor != 'dependabot[bot]')
+    steps:
+      - name: Run Semgrep (Go + OWASP)
+      - uses: actions/checkout@v6
+      - run: semgrep ci --config p/golang --config=p/owasp-top-ten
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2a - SAST (Semgrep) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \
+          $SLACK_WEBHOOK
+
+  stage-2b-static-analysis-sca:
+    name: Stage 2b - SCA (Trivy)
     needs: stage-1-gitleaks
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run Semgrep (Go + OWASP)
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            -e SEMGREP_APP_TOKEN=${{ secrets.SEMGREP_APP_TOKEN }} \
-            semgrep/semgrep \
-            semgrep ci --config=p/golang --config=p/owasp-top-ten /src
-
       - name: Run Trivy scan (FS mode)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -66,7 +81,7 @@ jobs:
           SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
         run: |
           curl -X POST -H 'Content-type: application/json' \
-          --data '{\"text\":\"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2 (FS/IaC Scan) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \
+          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2b - SCA (Trivy) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \
           $SLACK_WEBHOOK
 
   # # Stage 3: Container Build – If Stage 2 passes, then build and push to ECR.
