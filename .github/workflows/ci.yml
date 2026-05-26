@@ -30,9 +30,9 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/src" \
+            -e SEMGREP_APP_TOKEN=${{ secrets.SEMGREP_APP_TOKEN }} \
             semgrep/semgrep \
-            semgrep --config=p/golang --config=p/owasp-top-ten \
-            --error --quiet /src
+            semgrep ci --config=p/golang --config=p/owasp-top-ten /src
 
       - name: Run Trivy scan (FS mode)
         uses: aquasecurity/trivy-action@v0.36.0
