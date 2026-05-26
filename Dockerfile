@@ -1,18 +1,23 @@
-FROM python:3.11-slim-bookworm
+# Stage 1: Builder
+FROM golang:1.26-alpine AS builder
 
-RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+WORKDIR /src
 
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY app/go.mod app/go.sum ./
+RUN go mod download
 
 COPY app/ .
 
-RUN chown -R appuser:appuser /app
+# Build the binary statically linked for Linux
+RUN CGO_ENABLED=0 GOOS=linux go build -o /main ./cmd/server
 
-USER appuser
+# Stage 2: Final image
+FROM gcr.io/distroless/static-debian13:nonroot
+
+COPY --from=builder /main /main
+
+USER nonroot:nonroot
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/main"]
