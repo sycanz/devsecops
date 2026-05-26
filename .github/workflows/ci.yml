@@ -25,6 +25,7 @@ jobs:
 
   stage-2a-static-analysis-sast:
     name: Stage 2a - SAST (Semgrep)
+    needs: stage-1-gitleaks
     runs-on: ubuntu-latest
     container:
       image: semgrep/semgrep
