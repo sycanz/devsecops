@@ -7,8 +7,8 @@ on:
   pull_request:
       - main
 
-contents:
-  read
+permissions:
+  contents: read
 
 jobs:
   stage-1-gitleaks:
