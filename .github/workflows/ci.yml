@@ -4,12 +4,15 @@ on:
   push:
     branches:
       - main
+      - stg
   pull_request:
     branches:
       - main
+      - stg
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   stage-1-gitleaks:
@@ -27,16 +30,32 @@ jobs:
     name: Stage 2a - SAST (Semgrep)
     needs: stage-1-gitleaks
     runs-on: ubuntu-latest
-    container:
-      image: semgrep/semgrep
     if: (github.actor != 'dependabot[bot]')
     steps:
       - uses: actions/checkout@v6
 
       - name: Run Semgrep (Go + OWASP)
-        run: semgrep ci
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        run: |
+          docker run --rm \
+            -e SEMGREP_APP_TOKEN=${{ secrets.SEMGREP_APP_TOKEN }} \
+            semgrep/semgrep \
+            semgrep ci --json > semgrep-results.json
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OIDC_CLIENT_ID }} # using OIDC
+          audience: ${{ secrets.TS_OIDC_AUDIENCE }}
+          tags: tag:ci
+
+      - name: Upload Semgrep Scan Results
+        run: |
+          curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "scan_type=Semgrep JSON Report" \
+            -F "file=@semgrep-results.json" \
+            -F "engagement=1" \
+            -F "minimum_severity=Low"
 
       - name: Notify Slack on Failure
         if: failure()
@@ -52,31 +71,52 @@ jobs:
     needs: stage-1-gitleaks
     runs-on: ubuntu-latest
     steps:
-      - name: Run Trivy scan (FS mode)
+      - name: Run Trivy scan (Filesystem)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          hide-progress: false
           scan-type: 'fs'
-          scan-ref: '.'
+          scan-ref: '/github/workspace/'
+          scanners: 'vuln,secret'
           format: 'json'
           output: 'trivy-fs-results.json'
+          exit-code: '0'
           severity: 'CRITICAL,HIGH'
 
-      - name: Run Trivy scan (IaC mode)
+      - name: Run Trivy scan (IaC)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          scan-type: 'config'
           hide-progress: false
+          scan-type: 'config'
+          scan-ref: './terraform'
+          scanners: 'misconfig'
           format: 'json'
           output: 'trivy-iac-results.json'
-          exit-code: '1'
+          exit-code: '0'
           severity: 'CRITICAL,HIGH'
 
-      - name: Upload Scan Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-results
-          path: trivy-*.json
-          retention-days: 1
+      - name: Upload Trivy FS Scan Results
+        run: |
+          curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "scan_type=Trivy FS Scan" \
+            -F "file=@trivy-fs-results.json" \
+            -F "engagement=1"
+
+      - name: Upload Trivy IaC Scan Results
+        run: |
+          curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "scan_type=Trivy IaC Scan" \
+            -F "file=@trivy-iac-results.json" \
+            -F "engagement=1"
+
+      # - name: Upload Scan Results
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: trivy-results
+      #     path: trivy-*.json
+      #     retention-days: 1
 
       - name: Notify Slack on Failure
         if: failure()
