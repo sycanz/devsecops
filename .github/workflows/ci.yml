@@ -99,6 +99,14 @@ jobs:
           exit-code: '0'
           severity: 'CRITICAL,HIGH'
 
+      - name: Connect to Tailscale
+        if: always()
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OIDC_CLIENT_ID }} # using OIDC
+          audience: ${{ secrets.TS_OIDC_AUDIENCE }}
+          tags: tag:ci
+
       - name: Upload Trivy FS Scan Results
         if: always()
         run: |
@@ -116,13 +124,6 @@ jobs:
             -F "scan_type=Trivy IaC Scan" \
             -F "file=@trivy-iac-results.json" \
             -F "engagement=1"
-
-      # - name: Upload Scan Results
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: trivy-results
-      #     path: trivy-*.json
-      #     retention-days: 1
 
       - name: Notify Slack on Failure
         if: failure()
