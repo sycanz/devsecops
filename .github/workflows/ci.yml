@@ -37,6 +37,8 @@ jobs:
       - name: Run Semgrep (Go + OWASP)
         run: |
           docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
             -e SEMGREP_APP_TOKEN=${{ secrets.SEMGREP_APP_TOKEN }} \
             semgrep/semgrep \
             semgrep ci --json > semgrep-results.json
@@ -48,7 +50,7 @@ jobs:
           audience: ${{ secrets.TS_OIDC_AUDIENCE }}
           tags: tag:ci
 
-      - name: Upload Semgrep Scan Results
+      - name: Ingest results to DefectDojo
         run: |
           curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
@@ -76,7 +78,7 @@ jobs:
         with:
           hide-progress: false
           scan-type: 'fs'
-          scan-ref: '/github/workspace/'
+          scan-ref: '.'
           scanners: 'vuln,secret'
           format: 'json'
           output: 'trivy-fs-results.json'
