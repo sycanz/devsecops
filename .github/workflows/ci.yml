@@ -44,6 +44,7 @@ jobs:
             semgrep ci --json > semgrep-results.json
 
       - name: Connect to Tailscale
+        if: always()
         uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ secrets.TS_OIDC_CLIENT_ID }} # using OIDC
@@ -51,6 +52,7 @@ jobs:
           tags: tag:ci
 
       - name: Ingest results to DefectDojo
+        if: always()
         run: |
           curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
@@ -90,7 +92,7 @@ jobs:
         with:
           hide-progress: false
           scan-type: 'config'
-          scan-ref: './terraform'
+          scan-ref: '.'
           scanners: 'misconfig'
           format: 'json'
           output: 'trivy-iac-results.json'
@@ -98,6 +100,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Upload Trivy FS Scan Results
+        if: always()
         run: |
           curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
@@ -106,6 +109,7 @@ jobs:
             -F "engagement=1"
 
       - name: Upload Trivy IaC Scan Results
+        if: always()
         run: |
           curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
