@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     if: (github.actor != 'dependabot[bot]')
     steps:
+      - name: Checkout Git Repository
       - uses: actions/checkout@v6
 
       - name: Run Semgrep (Go + OWASP)
@@ -75,6 +76,9 @@ jobs:
     needs: stage-1-gitleaks
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Git Repository
+        uses: actions/checkout@v6
+
       - name: Run Trivy scan (Filesystem)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
