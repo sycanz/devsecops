@@ -84,7 +84,7 @@ jobs:
           scanners: 'vuln,secret'
           format: 'json'
           output: 'trivy-fs-results.json'
-          exit-code: '0'
+          exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
       - name: Run Trivy scan (IaC)
@@ -96,7 +96,7 @@ jobs:
           scanners: 'misconfig'
           format: 'json'
           output: 'trivy-iac-results.json'
-          exit-code: '0'
+          exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
       - name: Connect to Tailscale
@@ -107,7 +107,7 @@ jobs:
           audience: ${{ secrets.TS_OIDC_AUDIENCE }}
           tags: tag:ci
 
-      - name: Upload Trivy FS Scan Results
+      - name: Ingest Trivy FS result to DefectDojo
         if: always()
         run: |
           curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
@@ -116,7 +116,7 @@ jobs:
             -F "file=@trivy-fs-results.json" \
             -F "engagement=1"
 
-      - name: Upload Trivy IaC Scan Results
+      - name: Ingest Trivy IaC result to DefectDojo
         if: always()
         run: |
           curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
