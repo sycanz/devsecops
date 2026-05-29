@@ -76,6 +76,14 @@ _Avoid_: Prometheus Operator (predecessor name)
 WireGuard-based VPN for private networking between home server (Vault, Grafana) and EKS clusters.
 _Avoid_: OpenVPN, WireGuard manual config
 
+**DefectDojo**:
+Open-source vulnerability management platform. Ingests SemGrep and Trivy reports, deduplicates findings, and provides trending dashboards.
+_Avoid_: Snyk Dashboard (paid), WhiteSource (paid)
+
+**Jira**:
+Issue tracking system. Used for "Ticket & Tackle" — auto-creating tickets for Critical/High security findings with DefectDojo links and business risk context.
+_Avoid_: Linear, Trello (for this workflow)
+
 ## Relationships
 
 - **Pipeline** lints (golangci-lint) → scans (GitLeaks, SemGrep, Trivy) → tests Kyverno policies → builds image → scans image → generates SBOM → pushes to ECR → updates gitops-repo
@@ -87,6 +95,8 @@ _Avoid_: OpenVPN, WireGuard manual config
 - **SemGrep** scans Go and IaC code for vulnerabilities and anti-patterns before build
 - **Vault** serves secrets to pipeline (via OIDC) and to EKS clusters (via ESO) over Tailscale
 - **kube-prometheus-stack** on EKS exposes metrics → **Grafana** on home server scrapes via Tailscale
+- **DefectDojo** ingests SemGrep and Trivy findings from pipeline → generates trend reports
+- **Jira** tickets auto-created for Critical/High findings from **DefectDojo** (Ticket & Tackle)
 
 ## Example dialogue
 
@@ -121,3 +131,5 @@ _Avoid_: OpenVPN, WireGuard manual config
 - **Monitoring**: kube-prometheus-stack on EKS, Grafana on home server
 - **Connectivity**: Tailscale between home server ↔ EKS ↔ CI (when needed)
 - **Slack notifications**: Pipeline start / success / failure via webhook
+- **Vulnerability management**: DefectDojo on Debian server, ingests SemGrep + Trivy reports
+- **Ticketing**: Jira tickets created for Critical/High findings with DefectDojo link + business risk

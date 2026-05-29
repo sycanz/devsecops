@@ -33,7 +33,7 @@ jobs:
     if: (github.actor != 'dependabot[bot]')
     steps:
       - name: Checkout Git Repository
-      - uses: actions/checkout@v6
+        uses: actions/checkout@v6
 
       - name: Run Semgrep (Go + OWASP)
         run: |

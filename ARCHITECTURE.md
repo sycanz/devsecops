@@ -12,6 +12,8 @@
 | Policy Enforcement | Kyverno | Validates all resources at API server level |
 | Secrets | Vault (Debian server) + External Secrets Operator | Centralized secrets management |
 | Monitoring | kube-prometheus-stack on EKS + Grafana (home server) | Cluster + app observability |
+| Vulnerability Management | DefectDojo (Debian server) | Centralizes SemGrep + Trivy findings, dedup, trending |
+| Ticketing | Jira (via API) | Auto-creates tickets for Critical/High findings with business risk context |
 | Connectivity | Tailscale | Private network between home server, EKS, and CI |
 
 ---
@@ -103,6 +105,9 @@ ArgoCD instances each watch their respective directory.
   Stage 4: Docker build → Trivy image scan → SBOM (CycloneDX format)
   Stage 5: Update gitops-repo with new image tag → ArgoCD syncs
 
+  Stage 6: Import scan results → DefectDojo (SemGrep JSON + Trivy JSON)
+  Stage 7: If Critical/High → auto-create Jira ticket with DefectDojo link + business risk
+
   Slack notifications on: start / success / failure
 ```
 
@@ -158,6 +163,7 @@ Vault runs on the Debian home server alongside Grafana. Both EKS clusters reach 
   cadvisor + node-exporter (host-level metrics)
   Grafana ← Prometheus data sources (stg + prd + local) via Tailscale
   Alertmanager (optional, can forward to Slack)
+  DefectDojo ← ingests SemGrep + Trivy results via API from pipeline
 ```
 
 Grafana dashboards track:
@@ -184,6 +190,41 @@ Grafana dashboards track:
 
 ---
 
+## Vulnerability Management (DefectDojo)
+
+DefectDojo runs on the Debian home server (Docker), accessible via Tailscale. It aggregates scan results from the pipeline into a single dashboard.
+
+```
+Pipeline
+  ├── SemGrep JSON ──┐
+  ├── Trivy FS JSON ──┤──→ DefectDojo API → dedup → trending → dashboard
+  └── Trivy Image JSON ┘
+```
+
+Key features used:
+- **Auto-import**: Pipeline pushes JSON reports to DefectDojo API after each scan
+- **Deduplication**: Same CVE across multiple scans → grouped
+- **Severity filtering**: Only Critical/High trigger Jira tickets
+- **Product segmentation**: Separate products for stg vs prd findings
+
+## Ticket & Tackle (Jira Integration)
+
+On pipeline failure with Critical/High findings:
+
+```
+SemGrep/Trivy find Critical vuln
+  → DefectDojo ingests the report
+  → Pipeline script queries DefectDojo API for new Critical/High findings
+  → Creates Jira ticket with:
+      Summary: "[Security] {CVE-ID} in {target}"
+      Description: {business risk summary}
+      Link: {DefectDojo finding URL}
+      Labels: security, critical
+  → Ticket key returned and logged in pipeline output
+```
+
+This is implemented as a post-scan pipeline step (not a full-fledged automation — keeps it simple for a portfolio project).
+
 ## Kyverno Rollout Strategy
 
 | Phase | Mode | Duration |
@@ -201,3 +242,5 @@ Grafana dashboards track:
 - ArgoCD Rollouts for canary deployments
 - CIS EKS Benchmark scanning via kube-bench
 - Cost dashboards in Grafana
+- Deep-dive fine-tuning: SemGrep custom rules, Trivy ignore policies, Kyverno policy library
+- Jira automation → Slack notification on ticket creation
