@@ -10,13 +10,10 @@ on:
       - main
       - stg
 
-permissions:
-  contents: read
-  id-token: write
-
 jobs:
+  # Suspender for the belt in pre-commit's gitleak
   stage-1-gitleaks:
-    name: Stage 1 - Gitleaks (Suspender)
+    name: Stage 1 - Gitleaks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,10 +23,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Perform Static Application Security Testing (SAST) and ingest to Defectdojo
   stage-2a-static-analysis-sast:
     name: Stage 2a - SAST (Semgrep)
-    needs: stage-1-gitleaks
     runs-on: ubuntu-latest
+    needs: stage-1-gitleaks
+    permissions:
+      contents: read
+      id-token: write
     if: (github.actor != 'dependabot[bot]')
     steps:
       - name: Checkout Git Repository
@@ -71,10 +72,14 @@ jobs:
           --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2a - SAST (Semgrep) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
           $SLACK_WEBHOOK
 
+  # Perform Software Composition Analysis (SCA) and ingest to Defectdojo
   stage-2b-static-analysis-sca:
     name: Stage 2b - SCA (Trivy)
-    needs: stage-1-gitleaks
     runs-on: ubuntu-latest
+    needs: stage-1-gitleaks
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout Git Repository
         uses: actions/checkout@v6
@@ -140,102 +145,114 @@ jobs:
           --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 2b - SCA (Trivy) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
           $SLACK_WEBHOOK
 
-  # # Stage 3: Container Build – If Stage 2 passes, then build and push to ECR.
-  # stage-3-container-build:
-  #   name: Stage 3 - Build & Push to ECR
-  #   needs: stage-2-static-analysis
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     id-token: write # Required for OIDC
-  #     contents: read
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
+  # Build docker image + Trivy image scan + SBOM generation + Push to ECR
+  stage-3-container-build:
+    name: Stage 3 - Build, Scan & Push to ECR
+    runs-on: ubuntu-latest
+    needs:
+      - stage-2a-static-analysis-sast
+      - stage-2b-static-analysis-sca
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  #     - name: Configure AWS Credentials
-  #       uses: aws-actions/configure-aws-credentials@v4
-  #       with:
-  #         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-  #         aws-region: ap-southeast-1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-  #     - name: Login to Amazon ECR
-  #       id: login-ecr
-  #       uses: aws-actions/amazon-ecr-login@v2
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-  #     - name: Build, Tag, and Push Image
-  #       env:
-  #         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-  #         ECR_REPOSITORY: devsecops-app
-  #         IMAGE_TAG: ${{ github.sha }}
-  #       run: |
-  #         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-  #         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-  #         docker save $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -o devsecops-app.tar
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-  #     - name: Upload Image Artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: container-image
-  #         path: devsecops-app.tar
-  #         retention-days: 1
+      - name: Build Local Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/devsecops-app:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/devsecops-app:latest
 
-  # # Stage 4: Image Scan (Deep) – Scan the final built container image using trivy image.
-  # stage-4-image-scan:
-  #   name: Stage 4 - Trivy Image Scan
-  #   needs: stage-3-container-build
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Download Image Artifact
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: container-image
+      - name: Run Trivy scan (Image)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          hide-progress: false
+          scan-type: 'image'
+          image-ref: '${{ steps.login-ecr.outputs.registry }}/devsecops-app:${{ github.sha }}'
+          format: 'json'
+          output: 'trivy-image-results.json'
+          exit-code: '1'
+          # severity: 'CRITICAL,HIGH'
+      
+      - name: Connect to Tailscale
+        if: always()
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OIDC_CLIENT_ID }}
+          audience: ${{ secrets.TS_OIDC_AUDIENCE }}
+          tags: tag:ci
 
-  #     - name: Load Docker image
-  #       run: docker load -i devsecops-app.tar
+      - name: Ingest Trivy Image result to DefectDojo
+        if: always()
+        run: |
+          curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "scan_type=Trivy Scan" \
+            -F "file=@trivy-image-results.json" \
+            -F "engagement=1"
 
-  #     - name: Run Trivy Image scan
-  #       uses: aquasecurity/trivy-action@v0.36.0
-  #       with:
-  #         image-ref: 'devsecops-app:${{ github.sha }}'
-  #         format: 'table'
-  #         exit-code: '1'
-  #         severity: 'CRITICAL,HIGH'
+      - name: Push Image to Amazon ECR (with SBOM + Provenance)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          sbom: true
+          provenance: mode=max
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/devsecops-app:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/devsecops-app:latest
 
-  #     - name: Notify Slack on Failure
-  #       if: failure()
-  #       env:
-  #         SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
-  #       run: |
-  #         curl -X POST -H 'Content-type: application/json' \
-  #         --data '{\"text\":\"🚨 *Security Alert:* Critical/High vulnerabilities found in Stage 4 (Image Scan) for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}' \
-  #         $SLACK_WEBHOOK
+      - name: Generate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: '${{ steps.login-ecr.outputs.registry }}/devsecops-app:${{ github.sha }}'
+          format: 'cyclonedx'
+          output: 'sbom.cdx.json'
+          exit-code: '0'
 
-  # # Stage 5: Deploy to EKS (Final Step)
-  # stage-5-deploy:
-  #   name: Stage 5 - Deploy to EKS
-  #   needs: stage-4-image-scan
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     id-token: write
-  #     contents: read
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
+      - name: Submit to GitHub Dependency Graph
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'github'
+          output: 'dependency-results.sbom.json'
+          github-pat: ${{ secrets.GITHUB_TOKEN }}
 
-  #     - name: Configure AWS Credentials
-  #       uses: aws-actions/configure-aws-credentials@v4
-  #       with:
-  #         role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-  #         aws-region: ap-southeast-1
+      - name: Upload CycloneDX SBOM as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
 
-  #     - name: Update Kubeconfig
-  #       run: aws eks update-kubeconfig --name devsecops-cluster --region ap-southeast-1
-
-  #     - name: Deploy to EKS
-  #       run: |
-  #         # Use envsubst to inject the new image tag into the k8s manifest
-  #         # (Assume we have an app-deployment.yaml in k8s/)
-  #         export IMAGE_TAG=${{ github.sha }}
-  #         export ECR_REPOSITORY=${{ secrets.ECR_REPOSITORY }}
-  #         sed -i "s|image: .*|image: $ECR_REPOSITORY:$IMAGE_TAG|g" k8s/deployment.yaml
-  #         kubectl apply -f k8s/deployment.yaml
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Alert:* Stage 3 (Build, Scan & Push) failed for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
