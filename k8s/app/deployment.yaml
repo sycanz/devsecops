@@ -12,9 +12,13 @@ spec:
       labels:
         app: employee-directory
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
       containers:
       - name: main
         image: nginx:latest
         securityContext:
-          privileged: true # This is a major security risk!
-          runAsUser: 0     # Running as root is a big no-no
+          readOnlyRootFilesystem: true
+          privileged: false
+          allowPrivilegeEscalation: false

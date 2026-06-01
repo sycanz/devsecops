@@ -1,3 +1,11 @@
+data "aws_caller_identity" "current" {}
+
+resource "aws_kms_key" "eks" {
+  description             = "EKS secret encryption key"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+}
+
 resource "aws_eks_cluster" "main" {
   name     = "devsecops-cluster"
   role_arn = var.cluster_role_arn
@@ -5,11 +13,15 @@ resource "aws_eks_cluster" "main" {
   vpc_config {
     subnet_ids = var.private_subnets
     endpoint_private_access = true
-    endpoint_public_access  = true
+    endpoint_public_access  = false
   }
 
-  # Ensure that IAM Role permissions are created before and deleted after EKS Cluster handling.
-  # Otherwise, EKS will not be able to properly delete EKS managed EC2 infrastructure such as Security Groups.
+  encryption_config {
+    provider {
+      key_arn = aws_kms_key.eks.arn
+    }
+    resources = ["secrets"]
+  }
 }
 
 resource "aws_eks_node_group" "main" {

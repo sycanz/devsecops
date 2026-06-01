@@ -60,7 +60,7 @@ jobs:
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
             -F "scan_type=Semgrep JSON Report" \
             -F "file=@semgrep-results.json" \
-            -F "engagement=1" \
+            -F "engagement=2" \
             -F "minimum_severity=Low"
 
       - name: Notify Slack on Failure
@@ -95,7 +95,7 @@ jobs:
           format: 'json'
           output: 'trivy-fs-results.json'
           exit-code: '1'
-          # severity: 'CRITICAL,HIGH'
+          severity: 'CRITICAL,HIGH'
 
       - name: Run Trivy scan (IaC)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -108,7 +108,7 @@ jobs:
           format: 'json'
           output: 'trivy-iac-results.json'
           exit-code: '1'
-          # severity: 'CRITICAL,HIGH'
+          severity: 'CRITICAL,HIGH'
 
       - name: Connect to Tailscale
         if: always()
@@ -125,7 +125,7 @@ jobs:
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
             -F "scan_type=Trivy Scan" \
             -F "file=@trivy-fs-results.json" \
-            -F "engagement=1"
+            -F "engagement=2"
 
       - name: Ingest Trivy IaC result to DefectDojo
         if: always()
@@ -134,7 +134,7 @@ jobs:
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
             -F "scan_type=Trivy Scan" \
             -F "file=@trivy-iac-results.json" \
-            -F "engagement=1"
+            -F "engagement=2"
 
       - name: Notify Slack on Failure
         if: failure()
@@ -193,7 +193,7 @@ jobs:
           format: 'json'
           output: 'trivy-image-results.json'
           exit-code: '1'
-          # severity: 'CRITICAL,HIGH'
+          severity: 'CRITICAL,HIGH'
       
       - name: Connect to Tailscale
         if: always()
@@ -210,7 +210,7 @@ jobs:
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
             -F "scan_type=Trivy Scan" \
             -F "file=@trivy-image-results.json" \
-            -F "engagement=1"
+            -F "engagement=2"
 
       - name: Push Image to Amazon ECR (with SBOM + Provenance)
         uses: docker/build-push-action@v6
