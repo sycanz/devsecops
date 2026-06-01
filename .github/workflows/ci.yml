@@ -60,7 +60,7 @@ jobs:
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
             -F "scan_type=Semgrep JSON Report" \
             -F "file=@semgrep-results.json" \
-            -F "engagement=2" \
+            -F "engagement=3" \
             -F "minimum_severity=Low"
 
       - name: Notify Slack on Failure
@@ -125,7 +125,7 @@ jobs:
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
             -F "scan_type=Trivy Scan" \
             -F "file=@trivy-fs-results.json" \
-            -F "engagement=2"
+            -F "engagement=3"
 
       - name: Ingest Trivy IaC result to DefectDojo
         if: always()
@@ -134,7 +134,7 @@ jobs:
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
             -F "scan_type=Trivy Scan" \
             -F "file=@trivy-iac-results.json" \
-            -F "engagement=2"
+            -F "engagement=3"
 
       - name: Notify Slack on Failure
         if: failure()
@@ -210,19 +210,15 @@ jobs:
             -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
             -F "scan_type=Trivy Scan" \
             -F "file=@trivy-image-results.json" \
-            -F "engagement=2"
+            -F "engagement=3"
 
-      - name: Push Image to Amazon ECR (with SBOM + Provenance)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          sbom: true
-          provenance: mode=max
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/devsecops-app:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/devsecops-app:latest
+      - name: Push Image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          docker push $ECR_REGISTRY/devsecops-app:$SHA_TAG
+          docker push $ECR_REGISTRY/devsecops-app:latest
 
       - name: Generate CycloneDX SBOM
         uses: aquasecurity/trivy-action@v0.36.0
