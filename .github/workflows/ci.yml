@@ -27,6 +27,7 @@ jobs:
   stage-1-gitleaks:
     name: Stage 1 - Gitleaks
     runs-on: ubuntu-latest
+    needs: notify-slack-on-start
     steps:
       - uses: actions/checkout@v6
         with:
