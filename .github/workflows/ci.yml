@@ -314,9 +314,13 @@ jobs:
 
       - name: Validate manifests with Kyverno CLI
         run: |
+          # Replace placeholder so image-based policies can parse
+          sed -i 's|image: PLACEHOLDER|image: nginx:latest|' /tmp/gitops/stg/deployment.yaml
           kyverno apply /tmp/gitops/policies \
             --resource /tmp/gitops/stg \
             --resource /tmp/gitops/prd
+          # Restore placeholder — Stage 5 does the real replacement
+          git -C /tmp/gitops checkout -- stg/deployment.yaml
 
       - name: Upload Kyverno results
         if: always()
