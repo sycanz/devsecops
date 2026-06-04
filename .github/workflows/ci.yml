@@ -318,7 +318,8 @@ jobs:
           sed -i 's|image: PLACEHOLDER|image: nginx:latest|' /tmp/gitops/stg/deployment.yaml
           kyverno apply /tmp/gitops/policies \
             --resource /tmp/gitops/stg \
-            --resource /tmp/gitops/prd
+            --resource /tmp/gitops/prd \
+            --output /tmp/kyverno-results.json
           # Restore placeholder — Stage 5 does the real replacement
           git -C /tmp/gitops checkout -- stg/deployment.yaml
 
@@ -343,6 +344,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: stage-4-kyverno-cli
     permissions:
+      id-token: write
       contents: write
     steps:
       - uses: actions/checkout@v6
