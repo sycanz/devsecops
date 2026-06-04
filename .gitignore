@@ -26,3 +26,5 @@ ROADMAP.md
 
 .opencode/
 tmp/
+
+.kube/

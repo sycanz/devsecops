@@ -314,9 +314,9 @@ jobs:
 
       - name: Validate manifests with Kyverno CLI
         run: |
-          kyverno apply /tmp/gitops/stg /tmp/gitops/prd \
-            --policy /tmp/gitops/policies \
-            --output /tmp/kyverno-results.json
+          kyverno apply /tmp/gitops/policies \
+            --resource /tmp/gitops/stg \
+            --resource /tmp/gitops/prd
 
       - name: Upload Kyverno results
         if: always()

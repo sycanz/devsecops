@@ -1,9 +1,9 @@
 terraform {
   backend "s3" {
-    bucket         = "devsecops-tfstate-sycanz" 
-    key            = "state/terraform.tfstate" 
-    region         = "ap-southeast-1"
-    use_lockfile   = true
+    bucket       = "devsecops-tfstate-sycanz"
+    key          = "state/terraform.tfstate"
+    region       = "ap-southeast-1"
+    use_lockfile = true
   }
 }
 
@@ -16,7 +16,7 @@ module "s3" {
 }
 
 module "networking" {
-  source = "./modules/networking"
+  source = "./modules/vpc"
 }
 
 module "iam" {
@@ -31,7 +31,7 @@ module "eks" {
 
   vpc_id          = module.networking.vpc_id
   private_subnets = module.networking.private_subnets
-  
+
   cluster_role_arn    = module.iam.eks_cluster_role_arn
   node_group_role_arn = module.iam.eks_node_group_role_arn
 }
