@@ -316,10 +316,12 @@ jobs:
         run: |
           # Replace placeholder so image-based policies can parse
           sed -i 's|image: PLACEHOLDER|image: nginx:latest|' /tmp/gitops/stg/deployment.yaml
+          mv /tmp/gitops/policies/verify-images.yaml /tmp/verify-images.yaml
           kyverno apply /tmp/gitops/policies \
             --resource /tmp/gitops/stg \
             --resource /tmp/gitops/prd \
             --output /tmp/kyverno-results.json
+          mv /tmp/verify-images.yaml /tmp/gitops/policies/verify-images.yaml
           # Restore placeholder — Stage 5 does the real replacement
           git -C /tmp/gitops checkout -- stg/deployment.yaml
 
