@@ -1,0 +1,23 @@
+# Root app for local-dev minikube cluster.
+# ArgoCD syncs this to install Kyverno (via Helm chart),
+# kyverno-policies, monitoring, and external-secrets.
+#
+# external-secrets will fail (needs Vault) — expected on local-dev.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devsecops-root
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/sycanz/devsecops-gitops.git
+      targetRevision: main
+      path: apps/shared
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,407 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - stg
+  pull_request:
+    branches:
+      - main
+      - stg
+
+jobs:
+  notify-slack-on-start:
+    name: Notify Slack - Pipeline Started
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send start notification
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"📣 *Note:* CI Pipeline started for project ${{ github.repository }}, track jobs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
+
+  # Suspender for the belt in pre-commit's gitleak
+  stage-1-gitleaks:
+    name: Stage 1 - Gitleaks
+    runs-on: ubuntu-latest
+    needs: notify-slack-on-start
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"❌ *Alert:* Stage 1 - Gitleaks *failed* for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
+
+  # Perform Static Application Security Testing (SAST) and ingest to Defectdojo
+  stage-2a-static-analysis-sast:
+    name: Stage 2a - SAST (Semgrep)
+    runs-on: ubuntu-latest
+    needs: stage-1-gitleaks
+    permissions:
+      contents: read
+      id-token: write
+    if: (github.actor != 'dependabot[bot]')
+    steps:
+      - name: Checkout Git Repository
+        uses: actions/checkout@v6
+
+      - name: Run Semgrep (Go + OWASP)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            -w /src \
+            -e SEMGREP_APP_TOKEN=${{ secrets.SEMGREP_APP_TOKEN }} \
+            semgrep/semgrep \
+            semgrep ci --json > semgrep-results.json
+
+      - name: Connect to Tailscale
+        if: always()
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OIDC_CLIENT_ID }} # using OIDC
+          audience: ${{ secrets.TS_OIDC_AUDIENCE }}
+          tags: tag:ci
+
+      - name: Ingest results to DefectDojo
+        if: always()
+        run: |
+          curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "scan_type=Semgrep JSON Report" \
+            -F "file=@semgrep-results.json" \
+            -F "engagement=3" \
+            -F "minimum_severity=Low"
+
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in *Stage 2a - SAST (Semgrep)* for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
+
+  # Perform Software Composition Analysis (SCA) and ingest to Defectdojo
+  stage-2b-static-analysis-sca:
+    name: Stage 2b - SCA (Trivy)
+    runs-on: ubuntu-latest
+    needs: stage-1-gitleaks
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout Git Repository
+        uses: actions/checkout@v6
+
+      - name: Run Trivy scan (Filesystem)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          hide-progress: false
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'vuln,secret'
+          cache: 'false'
+          format: 'json'
+          output: 'trivy-fs-results.json'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy scan (IaC)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          hide-progress: false
+          scan-type: 'config'
+          scan-ref: '.'
+          scanners: 'misconfig'
+          cache: 'false'
+          format: 'json'
+          output: 'trivy-iac-results.json'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Connect to Tailscale
+        if: always()
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OIDC_CLIENT_ID }} # using OIDC
+          audience: ${{ secrets.TS_OIDC_AUDIENCE }}
+          tags: tag:ci
+
+      - name: Ingest Trivy FS result to DefectDojo
+        if: always()
+        run: |
+          curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "scan_type=Trivy Scan" \
+            -F "file=@trivy-fs-results.json" \
+            -F "engagement=3"
+
+      - name: Ingest Trivy IaC result to DefectDojo
+        if: always()
+        run: |
+          curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "scan_type=Trivy Scan" \
+            -F "file=@trivy-iac-results.json" \
+            -F "engagement=3"
+
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Security Alert:* Critical/High vulnerabilities found in *Stage 2b - SCA (Trivy)* for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
+
+  # Build docker image + Trivy image scan + SBOM generation + Push to ECR
+  stage-3-container-build:
+    name: Stage 3 - Build, Scan & Push to ECR
+    runs-on: ubuntu-latest
+    needs:
+      - stage-2a-static-analysis-sast
+      - stage-2b-static-analysis-sca
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+      attestations: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Local Image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/devsecops-app:${{ github.sha }}
+
+      - name: Run Trivy scan (Image)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          hide-progress: false
+          scan-type: 'image'
+          image-ref: '${{ steps.login-ecr.outputs.registry }}/devsecops-app:${{ github.sha }}'
+          format: 'json'
+          output: 'trivy-image-results.json'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+      
+      - name: Connect to Tailscale
+        if: always()
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OIDC_CLIENT_ID }}
+          audience: ${{ secrets.TS_OIDC_AUDIENCE }}
+          tags: tag:ci
+
+      - name: Ingest Trivy Image result to DefectDojo
+        if: always()
+        run: |
+          curl -X POST ${{ secrets.DEFECTDOJO_URL }} \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "scan_type=Trivy Scan" \
+            -F "file=@trivy-image-results.json" \
+            -F "engagement=3"
+
+      - name: Push Image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          docker push $ECR_REGISTRY/devsecops-app:$SHA_TAG | tee push-output.txt
+          DIGEST=$(grep -o 'sha256:[a-f0-9]\{64\}' push-output.txt | head -1)
+          echo "DIGEST=$DIGEST" >> $GITHUB_ENV
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.0
+
+      - name: Sign image with Cosign (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          cosign sign $ECR_REGISTRY/devsecops-app:$SHA_TAG
+
+      - name: Verify Cosign signature
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          cosign verify $ECR_REGISTRY/devsecops-app:$SHA_TAG \
+            --certificate-identity-regexp "https://github.com/sycanz/devsecops" \
+            --certificate-oidc-issuer-regexp "https://token.actions.githubusercontent.com"
+
+      - name: Generate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: '${{ steps.login-ecr.outputs.registry }}/devsecops-app:${{ github.sha }}'
+          format: 'cyclonedx'
+          output: 'sbom.cdx.json'
+          exit-code: '0'
+
+      - name: Submit to GitHub Dependency Graph
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'github'
+          output: 'dependency-results.sbom.json'
+          github-pat: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload CycloneDX SBOM as Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom.cdx.json
+
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Alert:* Stage 3 (Build, Scan & Push) *failed* for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
+
+  stage-4-kyverno-cli:
+    name: Stage 4 - Kyverno Manifest Validation
+    runs-on: ubuntu-latest
+    needs: stage-3-container-build
+    steps:
+      - name: Install Kyverno CLI
+        uses: kyverno/action-install-cli@v0.2.0
+
+      - name: Clone gitops-repo
+        env:
+          GITOPS_REPO: "sycanz/devsecops-gitops"
+          GH_TOKEN: ${{ secrets.GITOPS_PAT }}
+        run: |
+          git clone https://x-access-token:$GH_TOKEN@github.com/$GITOPS_REPO.git /tmp/gitops
+
+      - name: Validate manifests with Kyverno CLI
+        run: |
+          # Replace placeholder so image-based policies can parse
+          sed -i 's|image: PLACEHOLDER|image: nginx:latest|' /tmp/gitops/stg/deployment.yaml
+          mv /tmp/gitops/policies/verify-images.yaml /tmp/verify-images.yaml
+          kyverno apply /tmp/gitops/policies \
+            --resource /tmp/gitops/stg \
+            --resource /tmp/gitops/prd \
+            --output /tmp/kyverno-results.json
+          mv /tmp/verify-images.yaml /tmp/gitops/policies/verify-images.yaml
+          # Restore placeholder — Stage 5 does the real replacement
+          git -C /tmp/gitops checkout -- stg/deployment.yaml
+
+      - name: Upload Kyverno results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kyverno-results
+          path: /tmp/kyverno-results.json
+
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Alert:* Stage 4 (Kyverno Manifest Validation) *failed* for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
+
+  stage-5-deploy:
+    name: Stage 5 - Update GitOps & Deploy
+    runs-on: ubuntu-latest
+    needs: stage-4-kyverno-cli
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update gitops-repo with new image tag
+        env:
+          GITOPS_REPO: "sycanz/devsecops-gitops"
+          ECR_IMAGE: "${{ steps.login-ecr.outputs.registry }}/devsecops-app"
+          SHA_TAG: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITOPS_PAT }}
+        run: |
+          git clone https://x-access-token:$GH_TOKEN@github.com/$GITOPS_REPO.git /tmp/gitops
+          cd /tmp/gitops
+          yq eval ".spec.template.spec.containers[0].image = \"$ECR_IMAGE:$SHA_TAG\"" -i stg/deployment.yaml
+          git config user.name "devsecops-bot"
+          git config user.email "bot@devsecops.local"
+          git add .
+          git commit -m "deploy: update image to $SHA_TAG"
+          git push
+
+      - name: Notify Slack on Failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚨 *Alert:* Stage 5 (Deploy) *failed* for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK
+
+  notify-slack-on-success:
+    name: Notify Slack - Pipeline Completed
+    runs-on: ubuntu-latest
+    if: success()
+    needs:
+      - stage-1-gitleaks
+      - stage-2a-static-analysis-sast
+      - stage-2b-static-analysis-sca
+      - stage-3-container-build
+      - stage-4-kyverno-cli
+      - stage-5-deploy
+    steps:
+      - name: Send success notification
+        env:
+          SLACK_WEBHOOK: ${{ secrets.ONCALL_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"✅ *Note:* CI pipeline *succeeded* for project ${{ github.repository }}. \nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+          $SLACK_WEBHOOK

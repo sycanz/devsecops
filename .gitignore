@@ -25,3 +25,6 @@ terraform.rc
 ROADMAP.md
 
 .opencode/
+tmp/
+
+.kube/
